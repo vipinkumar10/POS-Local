@@ -35,6 +35,9 @@ export const syncService = {
 
       if (!response.ok) throw new Error('Sync failed server-side');
 
+      // Update last sync time
+      await db.businessConfig.update('config', { lastSyncAt: new Date() });
+
       return { success: true, message: 'Sync successful' };
     } catch (error) {
       console.error('Sync Error:', error);

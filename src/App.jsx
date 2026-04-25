@@ -12,19 +12,21 @@ import InventoryManagement from './modules/inventory/InventoryManagement';
 import ExpenseModule from './modules/expenses/ExpenseModule';
 import SettingsScreen from './modules/settings/SettingsScreen';
 import PWAUpdatePrompt from './shared/components/PWAUpdatePrompt';
+import { useLiveQuery } from 'dexie-react-hooks';
 import db from './db/database';
 
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const config = useLiveQuery(() => db.businessConfig.get('config'));
 
   useEffect(() => {
     async function init() {
       try {
         await seedDatabase();
         // Apply saved theme
-        const config = await db.businessConfig.get('config');
-        if (config?.theme === 'dark') {
+        const savedConfig = await db.businessConfig.get('config');
+        if (savedConfig?.theme === 'dark') {
           document.documentElement.setAttribute('data-theme', 'dark');
         }
       } catch (err) {
@@ -38,7 +40,10 @@ function App() {
 
   // Background Sync
   useEffect(() => {
-    if (!user) return;
+    if (!user || !config?.syncEnabled) return;
+
+    const intervalMs = (config.syncInterval || 5) * 60 * 1000;
+    console.log(`[Sync] Background sync scheduled every ${config.syncInterval || 5} minutes`);
 
     const interval = setInterval(async () => {
       const { syncService } = await import('./modules/sync/services/syncService');
@@ -47,10 +52,10 @@ function App() {
           console.log('[Sync] Background sync successful:', res.message);
         }
       });
-    }, 5 * 60 * 1000); // Every 5 minutes
+    }, intervalMs);
 
     return () => clearInterval(interval);
-  }, [user]);
+  }, [user, config?.syncEnabled, config?.syncInterval]);
 
   const handleLogin = (userData) => {
     setUser(userData);

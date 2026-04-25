@@ -26,6 +26,7 @@ export default function SettingsScreen() {
   const [reportEnabled, setReportEnabled] = useState(false);
   const [reportHour, setReportHour] = useState('23');
   const [reportRecipient, setReportRecipient] = useState('');
+  const [syncInterval, setSyncInterval] = useState('5');
   const [syncing, setSyncing] = useState(false);
 
   // Load config into form
@@ -41,6 +42,7 @@ export default function SettingsScreen() {
       setReportEnabled(config.reportEnabled || false);
       setReportHour(String(config.reportHour || '23'));
       setReportRecipient(config.reportRecipient || '');
+      setSyncInterval(String(config.syncInterval || '5'));
       setLoaded(true);
     }
   }, [config, loaded]);
@@ -59,6 +61,7 @@ export default function SettingsScreen() {
       reportEnabled,
       reportHour: Number(reportHour),
       reportRecipient: reportRecipient.trim(),
+      syncInterval: Number(syncInterval),
     });
 
     if (syncEnabled) {
@@ -140,8 +143,8 @@ export default function SettingsScreen() {
         // Clear and restore
         await db.transaction('rw',
           [db.businessConfig, db.categories, db.menuItems, db.inventoryItems,
-           db.menuItemIngredients, db.orders, db.orderItems, db.expenses,
-           db.expenseCategories, db.inventoryTransactions],
+          db.menuItemIngredients, db.orders, db.orderItems, db.expenses,
+          db.expenseCategories, db.inventoryTransactions],
           async () => {
             await db.businessConfig.clear();
             await db.categories.clear();
@@ -215,7 +218,7 @@ export default function SettingsScreen() {
             <div className="form-row">
               <div className="form-group">
                 <label className="form-label">Phone</label>
-                <input className="form-input" placeholder="+91 9876543210" value={phone} onChange={e => setPhone(e.target.value)} />
+                <input className="form-input" placeholder="+91 9999999999" value={phone} onChange={e => setPhone(e.target.value)} />
               </div>
               <div className="form-group">
                 <label className="form-label">GST Number</label>
@@ -248,7 +251,7 @@ export default function SettingsScreen() {
         <div className="settings-section">
           <h3><Cloud size={16} style={{ display: 'inline', marginRight: 6 }} />Cloud Sync & Reports</h3>
           <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            
+
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 600 }}>Enable Cloud Sync</div>
@@ -257,7 +260,7 @@ export default function SettingsScreen() {
                 </div>
               </div>
               <label className="switch">
-                <input type="checkbox" checked={syncEnabled} onChange={e => setSyncEnabled(e.target.checked)} />
+                <input type="checkbox" checked={syncEnabled} onChange={e => setSyncEnabled(e.target.checked ? true : false)} />
                 <span className="slider round"></span>
               </label>
             </div>
@@ -268,37 +271,56 @@ export default function SettingsScreen() {
                   <div className="form-group">
                     <label className="form-label"><Mail size={14} /> Automated Daily Reports</label>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                       <input type="checkbox" checked={reportEnabled} onChange={e => setReportEnabled(e.target.checked)} />
-                       <span style={{ fontSize: '0.8rem' }}>Enabled</span>
+                      <input type="checkbox" checked={reportEnabled} onChange={e => setReportEnabled(e.target.checked)} />
+                      <span style={{ fontSize: '0.8rem' }}>Enabled</span>
                     </div>
                   </div>
                   <div className="form-group">
                     <label className="form-label"><Clock size={14} /> Report Send Time (24h)</label>
                     <select className="form-select" value={reportHour} onChange={e => setReportHour(e.target.value)}>
-                      {Array.from({length: 24}, (_, i) => (
+                      {Array.from({ length: 24 }, (_, i) => (
                         <option key={i} value={i}>{i.toString().padStart(2, '0')}:00</option>
                       ))}
                     </select>
                   </div>
                 </div>
 
-                <div className="form-group">
-                  <label className="form-label">Recipient Email</label>
-                  <input 
-                    className="form-input" 
-                    type="email" 
-                    placeholder="email@example.com" 
-                    value={reportRecipient} 
-                    onChange={e => setReportRecipient(e.target.value)} 
-                  />
+                <div className="form-row">
+                  <div className="form-group">
+                    <label className="form-label"><RefreshCw size={14} /> Auto Sync Interval</label>
+                    <select className="form-select" value={syncInterval} onChange={e => setSyncInterval(e.target.value)}>
+                      <option value="1">Every 1 Minute</option>
+                      <option value="2">Every 2 Minutes</option>
+                      <option value="5">Every 5 Minutes</option>
+                      <option value="10">Every 10 Minutes</option>
+                      <option value="30">Every 30 Minutes</option>
+                      <option value="60">Every 1 Hour</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label">Recipient Email</label>
+                    <input
+                      className="form-input"
+                      type="email"
+                      placeholder="email@example.com"
+                      value={reportRecipient}
+                      onChange={e => setReportRecipient(e.target.value)}
+                    />
+                  </div>
                 </div>
+
+                {config?.lastSyncAt && (
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Clock size={12} /> Last synced: {new Date(config.lastSyncAt).toLocaleString()}
+                  </div>
+                )}
 
                 <div style={{ display: 'flex', gap: 12 }}>
                   <button className="btn btn-secondary" onClick={handleManualSync} disabled={syncing}>
-                    <RefreshCw size={16} className={syncing ? 'spin' : ''} /> 
+                    <RefreshCw size={16} className={syncing ? 'spin' : ''} />
                     {syncing ? 'Syncing...' : 'Sync Now'}
                   </button>
-                  <button className="btn btn-ghost" onClick={() => fetch('http://localhost:8080/api/reports/send-email', {method: 'POST'}).then(() => toast.success('Email triggered!'))}>
+                  <button className="btn btn-ghost" onClick={() => fetch('http://localhost:8080/api/reports/send-email', { method: 'POST' }).then(() => toast.success('Email triggered!'))}>
                     <Mail size={16} /> Test Email
                   </button>
                 </div>

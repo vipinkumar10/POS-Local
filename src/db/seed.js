@@ -31,6 +31,7 @@ const DEFAULT_BUSINESS_CONFIG = {
   footerMessage: 'Thank you! Visit again!',
   currency: '₹',
   theme: 'light',
+  syncInterval: 5,
 };
 
 const DEFAULT_USER = {
