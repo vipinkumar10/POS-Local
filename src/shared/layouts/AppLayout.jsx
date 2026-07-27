@@ -51,7 +51,7 @@ export default function AppLayout({ onLogout }) {
 
       {/* Mobile Bottom Nav */}
       <nav className="mobile-nav">
-        {navItems.slice(0, 5).map(item => (
+        {navItems.filter(item => ['Dashboard', 'New Order', 'Orders', 'Inventory', 'Settings'].includes(item.label)).map(item => (
           <NavLink
             key={item.to}
             to={item.to}
@@ -62,6 +62,10 @@ export default function AppLayout({ onLogout }) {
             <span>{item.label}</span>
           </NavLink>
         ))}
+        <button className="sidebar-link" onClick={onLogout}>
+          <LogOut size={20} />
+          <span>Logout</span>
+        </button>
       </nav>
     </div>
   );

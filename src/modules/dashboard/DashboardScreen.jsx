@@ -1,9 +1,10 @@
+import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
-import { TrendingUp, TrendingDown, ShoppingBag, Wallet, AlertTriangle, ArrowUpRight, } from 'lucide-react';
+import { TrendingUp, TrendingDown, ShoppingBag, Wallet, AlertTriangle, ArrowUpRight, Calendar } from 'lucide-react';
 import db from '../../db/database';
 import { formatCurrency, getStartOfDay, getEndOfDay, getDateRange, formatDate } from '../../shared/utils/helpers';
 
@@ -11,17 +12,20 @@ const PIE_COLORS = ['#e8590c', '#1971c2', '#2f9e44', '#e67700', '#9c36b5', '#0c8
 
 export default function DashboardScreen() {
   const today = new Date();
-  const startOfToday = getStartOfDay(today);
-  const endOfToday = getEndOfDay(today);
+  const [fromDate, setFromDate] = useState(formatDate(today, 'yyyy-MM-dd'));
+  const [toDate, setToDate] = useState(formatDate(today, 'yyyy-MM-dd'));
 
-  const todayOrders = useLiveQuery(
-    () => db.orders.where('orderDate').between(startOfToday, endOfToday).toArray(),
-    [], []
+  const startDate = getStartOfDay(new Date(fromDate));
+  const endDate = getEndOfDay(new Date(toDate));
+
+  const filteredOrders = useLiveQuery(
+    () => db.orders.where('orderDate').between(startDate, endDate).toArray(),
+    [fromDate, toDate], []
   );
 
-  const todayExpenses = useLiveQuery(
-    () => db.expenses.where('date').between(startOfToday, endOfToday).toArray(),
-    [], []
+  const filteredExpenses = useLiveQuery(
+    () => db.expenses.where('date').between(startDate, endDate).toArray(),
+    [fromDate, toDate], []
   );
 
   const allOrders = useLiveQuery(() => db.orders.toArray(), [], []);
@@ -31,47 +35,67 @@ export default function DashboardScreen() {
     [], []
   );
 
-  const totalSales = todayOrders.reduce((s, o) => s + o.totalAmount, 0);
-  const totalExpenses = todayExpenses.reduce((s, e) => s + e.amount, 0);
+  const totalSales = filteredOrders.reduce((s, o) => s + o.totalAmount, 0);
+  const totalExpenses = filteredExpenses.reduce((s, e) => s + e.amount, 0);
   const netProfit = totalSales - totalExpenses;
-  const avgOrderValue = todayOrders.length ? totalSales / todayOrders.length : 0;
+  const avgOrderValue = filteredOrders.length ? totalSales / filteredOrders.length : 0;
 
   // Payment mode breakdown
-  const paymentData = todayOrders.reduce((acc, o) => {
+  const paymentData = filteredOrders.reduce((acc, o) => {
     const mode = o.paymentMode || 'Cash';
     acc[mode] = (acc[mode] || 0) + o.totalAmount;
     return acc;
   }, {});
   const pieData = Object.entries(paymentData).map(([name, value]) => ({ name, value }));
 
-  // Top selling items (all time)
-  const itemSales = allOrderItems.reduce((acc, oi) => {
-    acc[oi.menuItemName] = (acc[oi.menuItemName] || 0) + oi.quantity;
-    return acc;
-  }, {});
+  // Top selling items (for selected range)
+  const rangeOrderIds = filteredOrders.map(o => o.id);
+  const itemSales = allOrderItems
+    .filter(oi => rangeOrderIds.includes(oi.orderId))
+    .reduce((acc, oi) => {
+      acc[oi.menuItemName] = (acc[oi.menuItemName] || 0) + oi.quantity;
+      return acc;
+    }, {});
+
   const topItems = Object.entries(itemSales)
     .map(([name, qty]) => ({ name: name.length > 14 ? name.slice(0, 14) + '…' : name, quantity: qty }))
     .sort((a, b) => b.quantity - a.quantity)
     .slice(0, 6);
 
-  // Weekly trend
-  const weekDays = getDateRange(7);
-  const trendData = weekDays.map(({ date, label }) => {
-    const dayEnd = getEndOfDay(date);
-    const daySales = allOrders
-      .filter(o => o.orderDate >= date && o.orderDate <= dayEnd)
-      .reduce((s, o) => s + o.totalAmount, 0);
-    return { label, sales: daySales };
-  });
+  // trend data logic based on range duration
+  const diffDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
+  const trendData = [];
+  if (diffDays <= 31) {
+    for (let i = 0; i < diffDays; i++) {
+      const d = new Date(startDate);
+      d.setDate(d.getDate() + i);
+      const dEnd = getEndOfDay(d);
+      const daySales = allOrders
+        .filter(o => o.orderDate >= d && o.orderDate <= dEnd)
+        .reduce((s, o) => s + o.totalAmount, 0);
+      trendData.push({ label: formatDate(d, 'dd MMM'), sales: daySales });
+    }
+  }
 
   return (
     <>
-      <div className="page-header">
+      <div className="page-header" style={{ alignItems: 'flex-start' }}>
         <div>
           <h1>Dashboard</h1>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-tertiary)', marginTop: '2px' }}>
-            {formatDate(today, 'EEEE, dd MMMM yyyy')}
+            Analytics Overview
           </p>
+        </div>
+        <div className="date-filter-group">
+          <div className="date-input-wrapper">
+            <Calendar size={14} />
+            <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} />
+          </div>
+          <span>to</span>
+          <div className="date-input-wrapper">
+            <Calendar size={14} />
+            <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} />
+          </div>
         </div>
       </div>
 
@@ -79,15 +103,15 @@ export default function DashboardScreen() {
         <div className="dashboard-grid">
           {/* Stat Cards */}
           <div className="stat-card primary">
-            <div className="stat-label"><ShoppingBag size={14} style={{ display: 'inline', marginRight: 4 }} />Today's Sales</div>
+            <div className="stat-label"><ShoppingBag size={14} style={{ display: 'inline', marginRight: 4 }} />Total Sales</div>
             <div className="stat-value">{formatCurrency(totalSales)}</div>
-            <div className="stat-sub">{todayOrders.length} order{todayOrders.length !== 1 ? 's' : ''}</div>
+            <div className="stat-sub">{filteredOrders.length} order{filteredOrders.length !== 1 ? 's' : ''}</div>
           </div>
 
           <div className="stat-card negative">
-            <div className="stat-label"><Wallet size={14} style={{ display: 'inline', marginRight: 4 }} />Today's Expenses</div>
+            <div className="stat-label"><Wallet size={14} style={{ display: 'inline', marginRight: 4 }} />Total Expenses</div>
             <div className="stat-value">{formatCurrency(totalExpenses)}</div>
-            <div className="stat-sub">{todayExpenses.length} transaction{todayExpenses.length !== 1 ? 's' : ''}</div>
+            <div className="stat-sub">{filteredExpenses.length} transaction{filteredExpenses.length !== 1 ? 's' : ''}</div>
           </div>
 
           <div className={`stat-card ${netProfit >= 0 ? 'positive' : 'negative'}`}>
@@ -96,13 +120,13 @@ export default function DashboardScreen() {
               Net Profit/Loss
             </div>
             <div className="stat-value">{formatCurrency(netProfit)}</div>
-            <div className="stat-sub">{netProfit >= 0 ? 'Profit' : 'Loss'} today</div>
+            <div className="stat-sub">{netProfit >= 0 ? 'Profit' : 'Loss'} for period</div>
           </div>
 
           <div className="stat-card info">
             <div className="stat-label"><ArrowUpRight size={14} style={{ display: 'inline', marginRight: 4 }} />Avg. Order Value</div>
             <div className="stat-value">{formatCurrency(avgOrderValue)}</div>
-            <div className="stat-sub">Per order average</div>
+            <div className="stat-sub">Range average</div>
           </div>
 
           {/* Weekly Sales Trend */}

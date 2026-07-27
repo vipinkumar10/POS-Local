@@ -1,6 +1,7 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { useLiveQuery } from 'dexie-react-hooks';
-import { Search, Trash2, ShoppingBag, Percent, X } from 'lucide-react';
+import { Search, Trash2, ShoppingBag, Percent, X, Mic, MicOff } from 'lucide-react';
 import db from '../../db/database';
 import Modal from '../../shared/components/Modal';
 import { useToast } from '../../shared/hooks/useToast';
@@ -9,7 +10,6 @@ import {
   calculateDiscount, getStartOfDay, getEndOfDay,
 } from '../../shared/utils/helpers';
 import ReceiptPrinter from '../../shared/components/ReceiptPrinter';
-import { useRef } from 'react';
 import { usePrinterStore } from '../printing/store/printerStore';
 import { bluetoothService } from '../printing/services/bluetoothService';
 import { buildOrderReceipt, buildKOT } from '../printing/services/receiptBuilder';
@@ -21,6 +21,7 @@ export default function POSScreen() {
   const [tableNumber, setTableNumber] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isListening, setIsListening] = useState(false);
 
   // Discount state
   const [showDiscount, setShowDiscount] = useState(false);
@@ -35,6 +36,8 @@ export default function POSScreen() {
   const [completedOrder, setCompletedOrder] = useState(null);
   const [completedOrderItems, setCompletedOrderItems] = useState([]);
   const [printType, setPrintType] = useState('receipt');
+  const [showVariantModal, setShowVariantModal] = useState(false);
+  const [activeVariantItem, setActiveVariantItem] = useState(null);
   const receiptRef = useRef();
 
   const toast = useToast();
@@ -73,34 +76,155 @@ export default function POSScreen() {
     return items;
   }, [menuItems, selectedCategory, searchQuery]);
 
-  const addToCart = useCallback((item) => {
+  const addToCart = useCallback((item, quantity = 1, selectedVariant = null) => {
+    // If item has variants and none selected, show selection modal
+    if (item.variants?.length > 0 && !selectedVariant) {
+      setActiveVariantItem(item);
+      setShowVariantModal(true);
+      return;
+    }
+
+    const price = selectedVariant ? selectedVariant.price : item.price;
+    const unit = selectedVariant ? selectedVariant.unit : item.unit;
+    const cartKey = selectedVariant ? `${item.id}-${unit}` : item.id;
+
     setCart(prev => {
-      const existing = prev.find(c => c.menuItemId === item.id);
+      const existing = prev.find(c => c.cartKey === cartKey);
       if (existing) {
         return prev.map(c =>
-          c.menuItemId === item.id ? { ...c, quantity: c.quantity + 1 } : c
+          c.cartKey === cartKey ? { ...c, quantity: c.quantity + quantity } : c
         );
       }
       return [...prev, {
+        cartKey,
         menuItemId: item.id,
         menuItemName: item.name,
-        price: item.price,
-        quantity: 1,
+        price,
+        unit,
+        quantity: quantity,
         isVeg: item.isVeg,
       }];
     });
+    
+    if (selectedVariant) setShowVariantModal(false);
   }, []);
 
-  const updateQty = useCallback((menuItemId, delta) => {
+  // Voice Recognition Logic
+  const startListening = () => {
+    // Microphone access requires a secure context (HTTPS or localhost)
+    if (!window.isSecureContext) {
+      toast.error('Microphone access requires a secure (HTTPS) connection. Please use localtunnel or host the app with SSL.');
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast.error('Voice recognition is not supported in this browser.');
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'en-US';
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => setIsListening(true);
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = (event) => {
+      setIsListening(false);
+      if (event.error === 'not-allowed') {
+        toast.error('Microphone permission denied. Please check your browser settings.');
+      } else {
+        toast.error('Voice error: ' + event.error);
+      }
+    };
+
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript.toLowerCase();
+      console.log('Voice Command:', transcript);
+      parseVoiceCommand(transcript);
+    };
+
+    try {
+      recognition.start();
+    } catch (e) {
+      console.error('Recognition start error:', e);
+      setIsListening(false);
+    }
+  };
+
+  const parseVoiceCommand = async (text) => {
+    // Check if device is online
+    const isOnline = navigator.onLine;
+
+    if (isOnline && import.meta.env.VITE_GEMINI_API_KEY) {
+      try {
+        const apiKey = import.meta.env.VITE_GEMINI_API_KEY?.trim();
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+
+        const menuContext = menuItems.map(i => `${i.name}`).join(", ");
+        const prompt = `Extract items/quantities from: "${text}". Menu: [${menuContext}]. Return ONLY JSON array like [{"itemName": "Coffee", "quantity": 1}].`;
+
+        const result = await model.generateContent(prompt);
+        const response = await result.response;
+        const jsonText = response.text().replace(/```json|```/g, "").trim();
+        const parsedItems = JSON.parse(jsonText);
+
+        if (parsedItems.length > 0) {
+          parsedItems.forEach(aiItem => {
+            const matchedItem = menuItems.find(m => 
+              m.name.toLowerCase().includes(aiItem.itemName.toLowerCase()) || 
+              aiItem.itemName.toLowerCase().includes(m.name.toLowerCase())
+            );
+            if (matchedItem) addToCart(matchedItem, aiItem.quantity);
+          });
+          toast.success("AI parsed your order.");
+          return;
+        }
+      } catch (err) {
+        console.warn("AI failed, falling back to local parsing:", err);
+      }
+    }
+
+    // LOCAL FALLBACK (Works Offline)
+    localParseVoiceCommand(text);
+  };
+
+  const localParseVoiceCommand = (text) => {
+    console.log("[Voice] Using local offline parser");
+    const numberMap = { 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5, 'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10 };
+    
+    let processedText = text.toLowerCase();
+    Object.keys(numberMap).forEach(word => {
+      processedText = processedText.replace(new RegExp(`\\b${word}\\b`, 'g'), numberMap[word]);
+    });
+
+    // Simple match: Look for numbers followed by menu item names
+    menuItems.forEach(item => {
+      const itemName = item.name.toLowerCase();
+      if (processedText.includes(itemName)) {
+        // Try to find quantity before the item name
+        const regex = new RegExp(`(\\d+)?\\s*${itemName}`, 'i');
+        const match = processedText.match(regex);
+        const qty = match && match[1] ? parseInt(match[1]) : 1;
+        
+        addToCart(item, qty);
+        toast.info(`Added ${qty} x ${item.name} (Offline Mode)`);
+      }
+    });
+  };
+
+  const updateQty = useCallback((cartKey, delta) => {
     setCart(prev => {
       return prev
-        .map(c => c.menuItemId === menuItemId ? { ...c, quantity: c.quantity + delta } : c)
+        .map(c => c.cartKey === cartKey ? { ...c, quantity: c.quantity + delta } : c)
         .filter(c => c.quantity > 0);
     });
   }, []);
 
-  const removeItem = useCallback((menuItemId) => {
-    setCart(prev => prev.filter(c => c.menuItemId !== menuItemId));
+  const removeItem = useCallback((cartKey) => {
+    setCart(prev => prev.filter(c => c.cartKey !== cartKey));
   }, []);
 
   const clearCart = useCallback(() => {
@@ -152,7 +276,7 @@ export default function POSScreen() {
         id: generateId(),
         orderId,
         menuItemId: c.menuItemId,
-        menuItemName: c.menuItemName,
+        menuItemName: c.unit ? `${c.menuItemName} (${c.unit})` : c.menuItemName,
         price: c.price,
         quantity: c.quantity,
         total: c.price * c.quantity,
@@ -212,14 +336,36 @@ export default function POSScreen() {
         <div className="pos-menu-header">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h1 style={{ fontSize: 'var(--font-size-lg)', fontWeight: 700 }}>🛒 New Order</h1>
-            <div className="search-bar" style={{ width: 220 }}>
-              <Search size={16} />
-              <input
-                type="text"
-                placeholder="Search menu..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-              />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <div className="search-bar" style={{ width: 180 }}>
+                <Search size={16} />
+                <input
+                  type="text"
+                  placeholder="Search menu..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <button 
+                className={`btn btn-icon ${isListening ? 'listening' : ''}`}
+                style={{ 
+                  background: isListening ? 'var(--color-danger)' : 'var(--color-primary-bg)',
+                  color: isListening ? '#fff' : 'var(--color-primary)',
+                  borderRadius: '50%',
+                  width: 40,
+                  height: 40,
+                  minWidth: 40,
+                  border: isListening ? 'none' : '1px solid var(--color-primary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 0
+                }}
+                onClick={startListening}
+                title="Voice Order"
+              >
+                <Mic size={20} style={{ position: 'static', transform: 'none' }} />
+              </button>
             </div>
           </div>
           <div className="pos-category-tabs">
@@ -308,18 +454,21 @@ export default function POSScreen() {
             </div>
           ) : (
             cart.map(item => (
-              <div key={item.menuItemId} className="cart-item">
+              <div key={item.cartKey} className="cart-item">
                 <div className="cart-item-info">
-                  <div className="cart-item-name">{item.menuItemName}</div>
+                  <div className="cart-item-name">
+                    {item.menuItemName} 
+                    {item.unit && <span style={{ fontSize: '0.75rem', color: 'var(--text-tertiary)', marginLeft: 6 }}>({item.unit})</span>}
+                  </div>
                   <div className="cart-item-price">{formatCurrency(item.price)} each</div>
                 </div>
                 <div className="cart-qty-control">
-                  <button className="cart-qty-btn minus" onClick={() => updateQty(item.menuItemId, -1)}>−</button>
+                  <button className="cart-qty-btn minus" onClick={() => updateQty(item.cartKey, -1)}>−</button>
                   <span className="cart-qty-value">{item.quantity}</span>
-                  <button className="cart-qty-btn" onClick={() => updateQty(item.menuItemId, 1)}>+</button>
+                  <button className="cart-qty-btn" onClick={() => updateQty(item.cartKey, 1)}>+</button>
                 </div>
                 <div className="cart-item-total">{formatCurrency(item.price * item.quantity)}</div>
-                <button className="btn btn-ghost btn-icon btn-sm" onClick={() => removeItem(item.menuItemId)}>
+                <button className="btn btn-ghost btn-icon btn-sm" onClick={() => removeItem(item.cartKey)}>
                   <X size={14} />
                 </button>
               </div>
@@ -492,6 +641,28 @@ export default function POSScreen() {
         config={config} 
         printType={printType}
       />
+
+      {/* Variant Selection Modal */}
+      <Modal
+        isOpen={showVariantModal}
+        onClose={() => setShowVariantModal(false)}
+        title={`Select Unit: ${activeVariantItem?.name}`}
+      >
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12 }}>
+          {/* Variants */}
+          {activeVariantItem?.variants?.map((v, i) => (
+            <button 
+              key={i}
+              className="btn btn-secondary" 
+              style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: 4, height: 'auto', border: '1.5px solid var(--border-color)' }}
+              onClick={() => addToCart(activeVariantItem, 1, v)}
+            >
+              <span style={{ fontWeight: 700 }}>{v.unit}</span>
+              <span style={{ fontSize: '1.1rem', color: 'var(--color-primary)' }}>{formatCurrency(v.price)}</span>
+            </button>
+          ))}
+        </div>
+      </Modal>
     </div>
   );
 }

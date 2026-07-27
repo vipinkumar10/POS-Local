@@ -28,6 +28,7 @@ export default function SettingsScreen() {
   const [reportRecipient, setReportRecipient] = useState('');
   const [syncInterval, setSyncInterval] = useState('5');
   const [syncing, setSyncing] = useState(false);
+  const [pushing, setPushing] = useState(false);
 
   // Load config into form
   useEffect(() => {
@@ -68,6 +69,16 @@ export default function SettingsScreen() {
       await syncService.updateBackendConfig('report.scheduler.enabled', reportEnabled, 'Enable daily reports');
       await syncService.updateBackendConfig('report.scheduler.hour', reportHour, 'Daily report hour (0-23)');
       await syncService.updateBackendConfig('report.recipient.email', reportRecipient, 'Report recipient email');
+      
+      // Sync business info to backend
+      await syncService.updateBackendConfig('business.name', businessName, 'Business Name');
+      await syncService.updateBackendConfig('business.address', address, 'Business Address');
+      await syncService.updateBackendConfig('business.phone', phone, 'Business Phone');
+      await syncService.updateBackendConfig('business.gst.number', gstNumber, 'GST Number');
+      await syncService.updateBackendConfig('business.gst.percent', gstPercent, 'GST Percentage');
+      
+      // Perform full sync (push and pull) after save
+      await syncService.performSync();
     }
 
     toast.success('Settings saved successfully!');
@@ -75,12 +86,23 @@ export default function SettingsScreen() {
 
   const handleManualSync = async () => {
     setSyncing(true);
-    const result = await syncService.performSync();
+    const result = await syncService.performSync(true); // Force sync
     setSyncing(false);
     if (result.success) {
       toast.success(result.message);
     } else {
       toast.error(result.message);
+    }
+  };
+
+  const handleManualPush = async () => {
+    setPushing(true);
+    const result = await syncService.pushData(true); // Force push
+    setPushing(false);
+    if (result.success) {
+      toast.success('Local data pushed to cloud successfully!');
+    } else {
+      toast.error('Push failed: ' + result.message);
     }
   };
 
@@ -195,9 +217,13 @@ export default function SettingsScreen() {
       <div className="page-header">
         <h1>⚙️ Settings</h1>
         <div className="page-header-actions">
+          <button className="btn btn-secondary" onClick={handleManualSync} disabled={syncing}>
+            <RefreshCw size={16} className={syncing ? 'spin' : ''} />
+            {syncing ? 'Syncing...' : 'Full Sync'}
+          </button>
           <button className="btn btn-secondary" onClick={toggleTheme}>
             {currentTheme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-            {currentTheme === 'dark' ? 'Light Mode' : 'Dark Mode'}
+            {currentTheme === 'dark' ? 'Light' : 'Dark'}
           </button>
         </div>
       </div>
@@ -316,9 +342,9 @@ export default function SettingsScreen() {
                 )}
 
                 <div style={{ display: 'flex', gap: 12 }}>
-                  <button className="btn btn-secondary" onClick={handleManualSync} disabled={syncing}>
-                    <RefreshCw size={16} className={syncing ? 'spin' : ''} />
-                    {syncing ? 'Syncing...' : 'Sync Now'}
+                  <button className="btn btn-primary" onClick={handleManualPush} disabled={pushing}>
+                    <Cloud size={16} className={pushing ? 'spin' : ''} />
+                    {pushing ? 'Pushing...' : 'Push to Cloud'}
                   </button>
                   <button className="btn btn-ghost" onClick={() => fetch('http://localhost:8080/api/reports/send-email', { method: 'POST' }).then(() => toast.success('Email triggered!'))}>
                     <Mail size={16} /> Test Email

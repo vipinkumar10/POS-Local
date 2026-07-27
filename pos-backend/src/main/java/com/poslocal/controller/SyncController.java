@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/sync")
 @RequiredArgsConstructor
@@ -15,8 +17,20 @@ public class SyncController {
     private final SyncService syncService;
 
     @PostMapping
-    public ResponseEntity<String> sync(@RequestBody SyncRequestDTO request) {
-        syncService.syncData(request.getOrders(), request.getExpenses());
-        return ResponseEntity.ok("Sync successful");
+    public ResponseEntity<Map<String, Object>> sync(@RequestBody SyncRequestDTO request) {
+        Map<String, Object> serverSettings = syncService.syncData(
+            request.getOrders(), 
+            request.getExpenses(),
+            request.getMenuItems(),
+            request.getInventoryItems(),
+            request.getRecipes(),
+            request.getSettings()
+        );
+        return ResponseEntity.ok(serverSettings);
+    }
+
+    @GetMapping("/master-data")
+    public ResponseEntity<Map<String, Object>> getMasterData() {
+        return ResponseEntity.ok(syncService.getMasterData());
     }
 }

@@ -30,6 +30,10 @@ export default function PinLogin({ onSuccess }) {
     const user = await db.users.where('pin').equals(enteredPin).first();
     if (user) {
       onSuccess(user);
+      // Trigger master data pull on login
+      import('../sync/services/syncService').then(({ syncService }) => {
+        syncService.pullData();
+      });
     } else {
       setError('Invalid PIN. Try again.');
       setPin('');
@@ -39,10 +43,43 @@ export default function PinLogin({ onSuccess }) {
   const keys = ['1','2','3','4','5','6','7','8','9','','0','back'];
 
   return (
-    <div className="pin-screen">
+    <div className="pin-screen" onClick={() => document.getElementById('pin-input')?.focus()}>
       <div className="pin-logo">P</div>
       <div className="pin-title">{config?.businessName || 'POS Local'}</div>
       <p style={{ color: '#868e96', fontSize: '0.85rem' }}>Enter your PIN to continue</p>
+
+      {/* Hidden input for native keyboard support */}
+      <input
+        id="pin-input"
+        type="password"
+        inputMode="numeric"
+        pattern="[0-9]*"
+        autoComplete="one-time-code"
+        autoCorrect="off"
+        autoCapitalize="off"
+        spellCheck="false"
+        value={pin}
+        onChange={(e) => {
+          const val = e.target.value.replace(/\D/g, '').slice(0, 4);
+          if (val === pin) return; // Ignore if no change
+          
+          setError('');
+          setPin(val);
+          
+          if (val.length === 4) {
+            // Slight delay to allow state to settle on mobile
+            setTimeout(() => verifyPin(val), 100);
+          }
+        }}
+        autoFocus
+        style={{
+          position: 'absolute',
+          opacity: 0,
+          pointerEvents: 'none',
+          height: 0,
+          width: 0
+        }}
+      />
 
       <div className="pin-dots">
         {[0,1,2,3].map(i => (

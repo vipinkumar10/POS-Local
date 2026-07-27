@@ -2,9 +2,9 @@ import Dexie from 'dexie';
 
 const db = new Dexie('POSLocalDB');
 
-db.version(1).stores({
+db.version(3).stores({
   businessConfig: 'id',
-  users: 'id, name, role',
+  users: 'id, name, role, pin',
   categories: 'id, name, sortOrder, isActive',
   menuItems: 'id, categoryId, name, price, isActive',
   inventoryItems: 'id, name, unit, currentStock',
